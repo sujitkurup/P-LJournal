@@ -1,0 +1,385 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>V&S Intraday P/L Table — Robust CSV Import</title>
+<style>
+  :root {
+    --bg:#0f1216; --card:#151a21; --muted:#9aa4b2; --text:#e8ecf1; --good:#18c27e; --bad:#ff4d4f; --border:#273142;
+  }
+  *{box-sizing:border-box;font-family:ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;}
+  body{background:var(--bg);color:var(--text);margin:0;padding:24px;}
+  h1{margin:0 0 10px 0;font-weight:800;letter-spacing:.2px;text-align:center}
+  .panel{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;max-width:1200px;margin:16px auto 0 auto;}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between}
+  .chip{background:#0e141b;border:1px solid var(--border);padding:8px 12px;border-radius:12px;color:var(--muted)}
+  label{font-size:12px;color:var(--muted);display:block;margin-bottom:6px}
+  input[type="text"], input[type="number"], input[type="file"], select{
+    background:#0e141b;color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px 12px;width:100%;
+  }
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .grid{display:grid;grid-template-columns:0.55fr 1.2fr 0.9fr 0.9fr 1fr 1fr 1fr 1.1fr auto;gap:10px;align-items:center}
+  .hdr{color:var(--muted);font-size:12px;position:sticky;top:0;background:var(--card);z-index:5;border-bottom:1px solid var(--border);padding:6px 0}
+  .hdr > div{text-align:center}
+  .btn{cursor:pointer;border:1px solid var(--border);background:#0e141b;color:var(--text);padding:10px 12px;border-radius:10px}
+  .btn:hover{border-color:#3a485d}
+  .btn.primary{background:#142033;border-color:#20334d}
+  .pill{padding:8px 10px;border-radius:10px;border:1px dashed var(--border);color:var(--muted);text-align:right}
+  .good{color:var(--good)}
+  .bad{color:var(--bad)}
+  .muted{color:var(--muted)}
+  .right{text-align:right}
+  .center{text-align:center}
+  .footer{display:flex;justify-content:space-between;align-items:center;margin-top:12px}
+  .table{margin-top:12px;max-height:60vh;overflow:auto;border:1px solid var(--border);border-radius:12px}
+  .note{font-size:12px;color:var(--muted);margin-top:8px}
+  .nowrap{white-space:nowrap}
+  .totalbar{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
+  .totalpill{min-width:260px;text-align:right;border:1px solid var(--border);background:#0e141b;border-radius:12px;padding:10px 12px}
+  .qtysrc{font-size:11px;color:var(--muted);margin-left:6px}
+  .count{color:var(--muted);font-size:13px}
+  .sticky-col { position: sticky; left: 0; z-index: 6; background: linear-gradient(90deg, rgba(20,24,31,0.98), rgba(20,24,31,0.9)); border-right:1px solid var(--border); }
+  .status{color:var(--muted);font-size:13px;margin-left:8px}
+  .mapper{display:none;gap:10px;align-items:end;margin-top:10px}
+  .mapper.show{display:flex;}
+</style>
+</head>
+<body>
+  <h1>V&amp;S Intraday P/L Table</h1>
+
+  <div class="panel">
+    <div class="row" style="margin-bottom:8px">
+      <div style="min-width:220px;max-width:300px;flex:1">
+        <label>Capital (₹)</label>
+        <input id="capital" type="number" min="0" step="1" value="10000" oninput="recalcAll()">
+      </div>
+      <div style="min-width:200px;max-width:260px">
+        <label>Stop-Loss %</label>
+        <input id="slPct" type="number" step="0.1" min="0" value="1" oninput="recalcAll()">
+      </div>
+      <div style="min-width:200px;max-width:260px">
+        <label>Target %</label>
+        <input id="tpPct" type="number" step="0.1" min="0" value="1.5" oninput="recalcAll()">
+      </div>
+      <div style="min-width:280px;max-width:420px;flex:2">
+        <label>Import orders CSV <span id="status" class="status"></span></label>
+        <input id="csvfile" type="file" accept=".csv,.txt" onchange="handleCSV(this.files[0])">
+      </div>
+    </div>
+
+    <div id="mapper" class="mapper">
+      <div>
+        <label>Symbol column</label>
+        <select id="mapSymbol"></select>
+      </div>
+      <div>
+        <label>Price column</label>
+        <select id="mapPrice"></select>
+      </div>
+      <div>
+        <label>Quantity column (optional)</label>
+        <select id="mapQty"></select>
+      </div>
+      <button class="btn primary" onclick="applyMapping()">Import with mapping</button>
+    </div>
+
+    <div class="table">
+      <div class="grid hdr">
+        <div class="sticky-col">SL. NO.</div>
+        <div>STOCK NAME</div>
+        <div>ENTRY PRICE</div>
+        <div>QUANTITY</div>
+        <div>TARGET (<span id="tpHdr">1.5</span>%)</div>
+        <div>SL (−<span id="slHdr">1</span>%)</div>
+        <div>FINAL SOLD PRICE</div>
+        <div>P/L</div>
+        <div></div>
+      </div>
+      <div id="rows"></div>
+    </div>
+
+    <div class="totalbar">
+      <div id="rowCount" class="count">Rows: 0</div>
+      <div id="totalPnl" class="totalpill muted">TOTAL P/L: ₹0.00</div>
+    </div>
+
+    <div class="footer">
+      <div class="note">P/L = (Sold − Entry) × Qty. If Qty is imported from CSV, we use that and show <span class="qtysrc">(CSV)</span>.</div>
+      <div>
+        <button class="btn" onclick="addRow()">+ Add Row</button>
+        <button class="btn" onclick="clearRows()">Clear</button>
+        <button class="btn primary" onclick="downloadCSV()">Export CSV</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const rowsEl = document.getElementById('rows');
+  const totalEl = document.getElementById('totalPnl');
+  const countEl = document.getElementById('rowCount');
+  const tpHdr = document.getElementById('tpHdr');
+  const slHdr = document.getElementById('slHdr');
+  const statusEl = document.getElementById('status');
+  const mapperEl = document.getElementById('mapper');
+  const mapSymbol = document.getElementById('mapSymbol');
+  const mapPrice = document.getElementById('mapPrice');
+  const mapQty = document.getElementById('mapQty');
+
+  let pendingRows = []; // rows parsed but not yet mapped
+
+  function money(n){ if(!isFinite(n)) return '₹0.00'; return '₹' + n.toFixed(2); }
+  function floor(n){ return Math.floor(n); }
+
+  function getPercents(){
+    const sl = Math.max(0, parseFloat(document.getElementById('slPct').value) || 0);
+    const tp = Math.max(0, parseFloat(document.getElementById('tpPct').value) || 0);
+    tpHdr.textContent = tp.toString();
+    slHdr.textContent = sl.toString();
+    return {sl, tp};
+  }
+
+  function renumber(){
+    const children = rowsEl.children;
+    for(let i=0;i<children.length;i++){
+      const sn = children[i].querySelector('.slno');
+      if (sn) sn.textContent = (i+1).toString();
+    }
+    countEl.textContent = 'Rows: ' + children.length;
+  }
+
+  function recalcRow(i){
+    const {sl, tp} = getPercents();
+    const cap = parseFloat(document.getElementById('capital').value) || 0;
+    const price = parseFloat(document.getElementById(`price_${i}`).value) || 0;
+    const sold  = parseFloat(document.getElementById(`sold_${i}`).value);
+    const qtyField = document.getElementById(`qty_${i}`);
+    const qtySrc = qtyField.getAttribute('data-src') || 'calc';
+
+    let qty;
+    if (qtySrc === 'csv') {
+      qty = parseFloat(qtyField.getAttribute('data-val')) || 0;
+    } else {
+      qty = price > 0 ? floor((cap * 2) / price) : 0;
+    }
+    qtyField.textContent = qty.toString() + (qtySrc==='csv' ? ' ' : '');
+    document.getElementById(`qtysrc_${i}`).textContent = qtySrc==='csv' ? '(CSV)' : '(calc)';
+
+    const tpPrice = price * (1 + tp/100);
+    const slPrice = price * (1 - sl/100);
+    document.getElementById(`tp_${i}`).textContent = money(tpPrice);
+    document.getElementById(`sl_${i}`).textContent = money(slPrice);
+
+    let pnl = 0;
+    if (!isNaN(sold)) pnl = (sold - price) * qty;
+    const pnlEl = document.getElementById(`pl_${i}`);
+    pnlEl.textContent = money(pnl);
+    pnlEl.className = 'pill right ' + (pnl > 0 ? 'good' : (pnl < 0 ? 'bad' : ''));
+  }
+
+  function recalcAll(){
+    const count = rowsEl.children.length;
+    let total = 0;
+    for(let i=0;i<count;i++){
+      recalcRow(i);
+      const cap = parseFloat(document.getElementById('capital').value) || 0;
+      const price = parseFloat(document.getElementById(`price_${i}`).value) || 0;
+      const sold  = parseFloat(document.getElementById(`sold_${i}`).value);
+      const qtySrc = document.getElementById(`qty_${i}`).getAttribute('data-src') || 'calc';
+      const qty = qtySrc==='csv' ? (parseFloat(document.getElementById(`qty_${i}`).getAttribute('data-val'))||0) : (price>0?Math.floor((cap*2)/price):0);
+      if(!isNaN(sold)) total += (sold - price) * qty;
+    }
+    totalEl.textContent = 'TOTAL P/L: ' + money(total);
+    totalEl.className = 'totalpill ' + (total>0?'good':(total<0?'bad':'muted'));
+    renumber();
+  }
+
+  function addRow(defaults={name:'', price:'', sold:'', qty:null, qtySrc:null}){
+    const i = rowsEl.children.length;
+    const row = document.createElement('div');
+    row.className = 'grid';
+    row.innerHTML = `
+      <div class="center slno sticky-col">${i+1}</div>
+      <div><input id="name_${i}" type="text" placeholder="e.g., SBIN" value="${defaults.name ?? ''}" oninput="recalcAll()"></div>
+      <div class="right"><input id="price_${i}" type="number" step="0.05" min="0" placeholder="Entry price" value="${defaults.price ?? ''}" oninput="recalcAll()"></div>
+      <div class="right">
+        <span id="qty_${i}" class="pill" data-src="${defaults.qtySrc ? 'csv' : 'calc'}" ${defaults.qty!=null?`data-val="${defaults.qty}"`:''}>0</span>
+        <span id="qtysrc_${i}" class="qtysrc">${defaults.qtySrc ? '(CSV)' : '(calc)'}</span>
+      </div>
+      <div id="tp_${i}" class="pill">₹0.00</div>
+      <div id="sl_${i}" class="pill">₹0.00</div>
+      <div class="right"><input id="sold_${i}" type="number" step="0.05" min="0" placeholder="Final sold price" value="${defaults.sold ?? ''}" oninput="recalcAll()"></div>
+      <div id="pl_${i}" class="pill right">₹0.00</div>
+      <div class="right"><button class="btn" onclick="this.closest('.grid').remove(); recalcAll();">Remove</button></div>
+    `;
+    rowsEl.appendChild(row);
+    recalcRow(i);
+    recalcAll();
+  }
+
+  function clearRows(){
+    rowsEl.innerHTML = '';
+    addRow();
+  }
+
+  function downloadCSV(){
+    const cap = parseFloat(document.getElementById('capital').value) || 0;
+    const {sl, tp} = getPercents();
+    const rows = [];
+    rows.push(['Capital', cap, 'SL %', sl, 'TP %', tp]);
+    rows.push([]);
+    rows.push(['SL. NO.','STOCK NAME','ENTRY PRICE','QUANTITY','QTY SOURCE',`TARGET (${tp}%)`,`SL (-${sl}%)`,'FINAL SOLD PRICE','P/L']);
+    const count = rowsEl.children.length;
+    for(let i=0;i<count;i++){
+      const name = document.getElementById(`name_${i}`).value || '';
+      const price = parseFloat(document.getElementById(`price_${i}`).value) || 0;
+      const qtySrc = document.getElementById(`qty_${i}`).getAttribute('data-src') || 'calc';
+      const qty = qtySrc==='csv' ? (parseFloat(document.getElementById(`qty_${i}`).getAttribute('data-val'))||0) : (price>0?Math.floor((cap*2)/price):0);
+      const tpTxt = document.getElementById(`tp_${i}`).textContent;
+      const slTxt = document.getElementById(`sl_${i}`).textContent;
+      const sold = document.getElementById(`sold_${i}`).value || '';
+      const pl = document.getElementById(`pl_${i}`).textContent;
+      rows.push([i+1, name, price, qty, qtySrc.toUpperCase(), tpTxt, slTxt, sold, pl]);
+    }
+    rows.push([]);
+    rows.push(['TOTAL P/L', document.getElementById('totalPnl').textContent.replace('TOTAL P/L: ','')]);
+    const csv = rows.map(r => r.join(',')).join('\n');
+    const blob = new Blob([csv], {type: 'text/csv'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'vs_intraday_pl_table.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // -------- Robust CSV handling & mapping --------
+  function handleCSV(file){
+    if(!file) return;
+    statusEl.textContent = 'Reading…';
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      try{
+        const text = e.target.result.replace(/^\ufeff/, ''); // strip BOM
+        const {rows, delimiter} = parseAnyCSV(text);
+        if(rows.length===0){ statusEl.textContent = 'Empty file.'; return; }
+        statusEl.textContent = 'Parsed ' + (rows.length-1) + ' rows (' + delimiter + '-delimited)';
+        const headers = rows[0].map(h => h.trim());
+        pendingRows = rows.slice(1);
+
+        // Attempt auto-detect
+        const idxSym = findCol(headers, ['symbol','ticker','stock','scrip','name','tradingsymbol','instrument','code']);
+        const idxPrice = findCol(headers, ['price','avg_price','entry','fill_price','average price','buy price','ltp','avg. price','avg traded price','average traded price']);
+        const idxQty = findCol(headers, ['qty','quantity','filled_qty','filled quantity','order_quantity','filled','trade qty','traded quantity']);
+
+        if(idxSym===-1 || idxPrice===-1){
+          // Show manual mapper
+          mapperEl.classList.add('show');
+          fillMapper(headers);
+        }else{
+          // Auto import
+          rowsEl.innerHTML='';
+          for(const r of pendingRows){
+            if(r.length===0) continue;
+            const name = (r[idxSym]||'').toString().trim();
+            const price = toNum(r[idxPrice]);
+            const qtyRaw = idxQty>=0 ? toNum(r[idxQty]) : null;
+            addRow({name, price: isFinite(price)?price:'', qty: isFinite(qtyRaw)?qtyRaw:null, qtySrc: isFinite(qtyRaw)});
+          }
+          recalcAll();
+          mapperEl.classList.remove('show');
+        }
+      }catch(err){
+        console.error(err);
+        statusEl.textContent = 'Import failed';
+        alert("Failed to import CSV. See console for details.");
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  function fillMapper(headers){
+    const opts = headers.map((h,i)=> `<option value="${i}">${h||('(column '+(i+1)+')')}</option>`).join('');
+    mapSymbol.innerHTML = opts;
+    mapPrice.innerHTML = opts;
+    mapQty.innerHTML = `<option value="-1">-- none --</option>` + opts;
+  }
+
+  function applyMapping(){
+    if(!pendingRows.length) return;
+    const iS = parseInt(mapSymbol.value,10);
+    const iP = parseInt(mapPrice.value,10);
+    const iQ = parseInt(mapQty.value,10);
+    rowsEl.innerHTML='';
+    for(const r of pendingRows){
+      const name = (r[iS]||'').toString().trim();
+      const price = toNum(r[iP]);
+      const qtyRaw = (iQ>=0) ? toNum(r[iQ]) : null;
+      addRow({name, price: isFinite(price)?price:'', qty: isFinite(qtyRaw)?qtyRaw:null, qtySrc: isFinite(qtyRaw)});
+    }
+    recalcAll();
+    mapperEl.classList.remove('show');
+    statusEl.textContent = 'Imported ' + pendingRows.length + ' rows';
+    pendingRows = [];
+  }
+
+  function toNum(x){
+    if(x==null) return NaN;
+    const s = String(x).replace(/[^0-9.\-]/g,'');
+    const v = parseFloat(s);
+    return v;
+  }
+
+  function parseAnyCSV(text){
+    // Detect delimiter by counting separators on first non-empty line
+    const lines = text.split(/\r?\n/).filter(l => l.trim().length>0);
+    if(!lines.length) return {rows:[], delimiter:'comma'};
+    const first = lines[0];
+    const candidates = [{ch:',', name:'comma'}, {ch:'\t', name:'tab'}, {ch:';', name:'semicolon'}];
+    let delim = candidates[0];
+    let maxHits = -1;
+    for(const c of candidates){
+      const hits = splitCSV(first, c.ch).length;
+      if(hits > maxHits){ maxHits=hits; delim = c; }
+    }
+    const rows = lines.map(line => splitCSV(line, delim.ch));
+    return {rows, delimiter:delim.name};
+  }
+
+  function splitCSV(line, delimiter){
+    // CSV splitter that respects quotes
+    const out=[];
+    let cur='', inq=false;
+    for(let i=0;i<line.length;i++){
+      const ch=line[i];
+      if(ch=='"'){
+        if(inq && line[i+1]=='"'){ cur+='"'; i++; }
+        else { inq=!inq; }
+      }else if(ch==delimiter && !inq){
+        out.push(cur); cur='';
+      }else{
+        cur+=ch;
+      }
+    }
+    out.push(cur);
+    return out;
+  }
+
+  function findCol(headers, candidates){
+    const norm = h => h.toLowerCase().replace(/[^a-z0-9]/g,'');
+    const H = headers.map(norm);
+    const C = candidates.map(norm);
+    // exact
+    for(let i=0;i<H.length;i++) if(C.includes(H[i])) return i;
+    // contains
+    for(let i=0;i<H.length;i++){
+      for(const c of C) if(H[i].includes(c)) return i;
+    }
+    return -1;
+  }
+
+  addRow();
+</script>
+</body>
+</html>
