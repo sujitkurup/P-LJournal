@@ -1,10 +1,9 @@
-
 <!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>V&S Intraday P/L Table — Robust CSV Import</title>
+<title>V&S Intraday P/L Table — Original UI (Qty auto-calc)</title>
 <style>
   :root {
     --bg:#0f1216; --card:#151a21; --muted:#9aa4b2; --text:#e8ecf1; --good:#18c27e; --bad:#ff4d4f; --border:#273142;
@@ -107,7 +106,7 @@
     </div>
 
     <div class="footer">
-      <div class="note">P/L = (Sold − Entry) × Qty. If Qty is imported from CSV, we use that and show <span class="qtysrc">(CSV)</span>.</div>
+      <div class="note">P/L = (Sold − Entry) × Qty. <b>Qty is always calculated</b> as floor((Capital × 2) / Entry). CSV qty is ignored.</div>
       <div>
         <button class="btn" onclick="addRow()">+ Add Row</button>
         <button class="btn" onclick="clearRows()">Clear</button>
@@ -128,8 +127,7 @@
   const mapPrice = document.getElementById('mapPrice');
   const mapQty = document.getElementById('mapQty');
 
-  let pendingRows = []; // rows parsed but not yet mapped
-
+  // --- helpers ---
   function money(n){ if(!isFinite(n)) return '₹0.00'; return '₹' + n.toFixed(2); }
   function floor(n){ return Math.floor(n); }
 
@@ -150,22 +148,20 @@
     countEl.textContent = 'Rows: ' + children.length;
   }
 
+  function computedQty(price){
+    const cap = parseFloat(document.getElementById('capital').value) || 0;
+    return price > 0 ? floor((cap * 2) / price) : 0; // margin x2 as in your original
+  }
+
   function recalcRow(i){
     const {sl, tp} = getPercents();
-    const cap = parseFloat(document.getElementById('capital').value) || 0;
     const price = parseFloat(document.getElementById(`price_${i}`).value) || 0;
     const sold  = parseFloat(document.getElementById(`sold_${i}`).value);
-    const qtyField = document.getElementById(`qty_${i}`);
-    const qtySrc = qtyField.getAttribute('data-src') || 'calc';
 
-    let qty;
-    if (qtySrc === 'csv') {
-      qty = parseFloat(qtyField.getAttribute('data-val')) || 0;
-    } else {
-      qty = price > 0 ? floor((cap * 2) / price) : 0;
-    }
-    qtyField.textContent = qty.toString() + (qtySrc==='csv' ? ' ' : '');
-    document.getElementById(`qtysrc_${i}`).textContent = qtySrc==='csv' ? '(CSV)' : '(calc)';
+    const qty = computedQty(price); // ALWAYS calc, ignore CSV
+    const qtyField = document.getElementById(`qty_${i}`);
+    qtyField.textContent = qty.toString();
+    document.getElementById(`qtysrc_${i}`).textContent = '(calc)';
 
     const tpPrice = price * (1 + tp/100);
     const slPrice = price * (1 - sl/100);
@@ -184,11 +180,9 @@
     let total = 0;
     for(let i=0;i<count;i++){
       recalcRow(i);
-      const cap = parseFloat(document.getElementById('capital').value) || 0;
       const price = parseFloat(document.getElementById(`price_${i}`).value) || 0;
       const sold  = parseFloat(document.getElementById(`sold_${i}`).value);
-      const qtySrc = document.getElementById(`qty_${i}`).getAttribute('data-src') || 'calc';
-      const qty = qtySrc==='csv' ? (parseFloat(document.getElementById(`qty_${i}`).getAttribute('data-val'))||0) : (price>0?Math.floor((cap*2)/price):0);
+      const qty = computedQty(price); // ALWAYS calc, ignore CSV
       if(!isNaN(sold)) total += (sold - price) * qty;
     }
     totalEl.textContent = 'TOTAL P/L: ' + money(total);
@@ -196,7 +190,7 @@
     renumber();
   }
 
-  function addRow(defaults={name:'', price:'', sold:'', qty:null, qtySrc:null}){
+  function addRow(defaults={name:'', price:'', sold:''}){
     const i = rowsEl.children.length;
     const row = document.createElement('div');
     row.className = 'grid';
@@ -205,8 +199,8 @@
       <div><input id="name_${i}" type="text" placeholder="e.g., SBIN" value="${defaults.name ?? ''}" oninput="recalcAll()"></div>
       <div class="right"><input id="price_${i}" type="number" step="0.05" min="0" placeholder="Entry price" value="${defaults.price ?? ''}" oninput="recalcAll()"></div>
       <div class="right">
-        <span id="qty_${i}" class="pill" data-src="${defaults.qtySrc ? 'csv' : 'calc'}" ${defaults.qty!=null?`data-val="${defaults.qty}"`:''}>0</span>
-        <span id="qtysrc_${i}" class="qtysrc">${defaults.qtySrc ? '(CSV)' : '(calc)'}</span>
+        <span id="qty_${i}" class="pill">0</span>
+        <span id="qtysrc_${i}" class="qtysrc">(calc)</span>
       </div>
       <div id="tp_${i}" class="pill">₹0.00</div>
       <div id="sl_${i}" class="pill">₹0.00</div>
@@ -235,13 +229,12 @@
     for(let i=0;i<count;i++){
       const name = document.getElementById(`name_${i}`).value || '';
       const price = parseFloat(document.getElementById(`price_${i}`).value) || 0;
-      const qtySrc = document.getElementById(`qty_${i}`).getAttribute('data-src') || 'calc';
-      const qty = qtySrc==='csv' ? (parseFloat(document.getElementById(`qty_${i}`).getAttribute('data-val'))||0) : (price>0?Math.floor((cap*2)/price):0);
+      const qty = computedQty(price); // ALWAYS calc, ignore CSV
       const tpTxt = document.getElementById(`tp_${i}`).textContent;
       const slTxt = document.getElementById(`sl_${i}`).textContent;
       const sold = document.getElementById(`sold_${i}`).value || '';
       const pl = document.getElementById(`pl_${i}`).textContent;
-      rows.push([i+1, name, price, qty, qtySrc.toUpperCase(), tpTxt, slTxt, sold, pl]);
+      rows.push([i+1, name, price, qty, 'CALC', tpTxt, slTxt, sold, pl]);
     }
     rows.push([]);
     rows.push(['TOTAL P/L', document.getElementById('totalPnl').textContent.replace('TOTAL P/L: ','')]);
@@ -254,7 +247,9 @@
     URL.revokeObjectURL(url);
   }
 
-  // -------- Robust CSV handling & mapping --------
+  // -------- CSV handling & mapping (unchanged UI; qty ignored) --------
+  let pendingRows = []; // rows parsed but not yet mapped
+
   function handleCSV(file){
     if(!file) return;
     statusEl.textContent = 'Reading…';
@@ -271,7 +266,7 @@
         // Attempt auto-detect
         const idxSym = findCol(headers, ['symbol','ticker','stock','scrip','name','tradingsymbol','instrument','code']);
         const idxPrice = findCol(headers, ['price','avg_price','entry','fill_price','average price','buy price','ltp','avg. price','avg traded price','average traded price']);
-        const idxQty = findCol(headers, ['qty','quantity','filled_qty','filled quantity','order_quantity','filled','trade qty','traded quantity']);
+        const idxQty = -1; // force ignore qty
 
         if(idxSym===-1 || idxPrice===-1){
           // Show manual mapper
@@ -284,8 +279,7 @@
             if(r.length===0) continue;
             const name = (r[idxSym]||'').toString().trim();
             const price = toNum(r[idxPrice]);
-            const qtyRaw = idxQty>=0 ? toNum(r[idxQty]) : null;
-            addRow({name, price: isFinite(price)?price:'', qty: isFinite(qtyRaw)?qtyRaw:null, qtySrc: isFinite(qtyRaw)});
+            addRow({name, price: isFinite(price)?price:'', sold:''});
           }
           recalcAll();
           mapperEl.classList.remove('show');
@@ -310,13 +304,11 @@
     if(!pendingRows.length) return;
     const iS = parseInt(mapSymbol.value,10);
     const iP = parseInt(mapPrice.value,10);
-    const iQ = parseInt(mapQty.value,10);
     rowsEl.innerHTML='';
     for(const r of pendingRows){
       const name = (r[iS]||'').toString().trim();
       const price = toNum(r[iP]);
-      const qtyRaw = (iQ>=0) ? toNum(r[iQ]) : null;
-      addRow({name, price: isFinite(price)?price:'', qty: isFinite(qtyRaw)?qtyRaw:null, qtySrc: isFinite(qtyRaw)});
+      addRow({name, price: isFinite(price)?price:'', sold:''});
     }
     recalcAll();
     mapperEl.classList.remove('show');
@@ -326,7 +318,7 @@
 
   function toNum(x){
     if(x==null) return NaN;
-    const s = String(x).replace(/[^0-9.\-]/g,'');
+    const s = String(x).replace(/[^0-9.\-]/g,''); // keep only numeric
     const v = parseFloat(s);
     return v;
   }
@@ -367,7 +359,7 @@
   }
 
   function findCol(headers, candidates){
-    const norm = h => h.toLowerCase().replace(/[^a-z0-9]/g,'');
+    const norm = h => h.toLowerCase().replace(/[^a-z0-9]/g,''); 
     const H = headers.map(norm);
     const C = candidates.map(norm);
     // exact
